@@ -1,4 +1,3 @@
-
 #include <Wire.h> 
 #include <LiquidCrystal_I2C.h> //include I2C Library
 #include <SPI.h> //include nRF24L01 Library
@@ -19,7 +18,7 @@
 #define NONE            0                // Neither DOT nor DASH
 
 // set radio 0 is sent 1 is get
-bool radioNumber =0;
+bool radioNumber =1;
 
 /* Hardware configuration: Set up nRF24L01 radio on SPI bus plus pins 7 & 8 */
 RF24 radio(7,8);
@@ -27,10 +26,11 @@ RF24 radio(7,8);
 byte addresses[][6] = {"1Node","2Node"};
 
 // Used to control whether this node is sending or receiving
-bool role = 1;
+bool role = 0;
 
 int tcount=0; // tcount is to count get's count
 char temp; // this is store sent and get 
+
 LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 boolean buttonWasPressed = false;        // Indicator of whether button was pressed in the last cycle
 long lastTimestamp = 0;                  // Last recorded timestamp  (used for mesuring duration)
@@ -75,15 +75,16 @@ void setup() {
  // Serial.begin(9600);                    // Init the serial port
   resetInputSignal();                    // Reset input signal buffer
   
-   lcd.begin(16, 2);      // Initialization LCD，
-  // Initialization word
-  lcd.setCursor(0, 0); // set in row 1
+  lcd.begin(16, 2);      // 初始化 LCD，一行 16 的字元，共 2 行，預設開啟背光
+  // 輸出初始化文字 n mm  n
+  lcd.setCursor(0, 0); // 設定游標位置在第一行行首
   lcd.print("Morse Game!");
-  delay(1000);
-  lcd.setCursor(0, 1); // set in row 2 
+ delay(1000);
+  lcd.setCursor(0, 1); // 設定游標位置在第二行行首
   lcd.print("Enjoy!");
-  delay(1000);
+  delay(2000);
 
+// 告知使用者可以開始手動輸入訊息
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Use Button");
@@ -91,7 +92,10 @@ void setup() {
   lcd.print("Type Morse now");
    delay(2000);
    lcd.clear();
-  lcd.setCursor(0, 0);
+  lcd.setCursor(0, 1);
+   lcd.print("Morse Game!");
+  lcd.setCursor(0, 1);
+  lcd.clear();
 
   // Start the radio listening for data
   radio.startListening();
@@ -266,11 +270,12 @@ void loop() { // loop forever
     
       lastTimestamp = currentTimestamp; // record the time of the button press
       if (duration > LETTER_GAP) {
-        lcd.setCursor(0, 1); //set row 2
-        lcd.print(' '); // print space
-        temp=(' '); // temp is to sent
+        //Serial.print(count);
+        lcd.setCursor(0, 1);
+        lcd.print(' ');
+        temp=(' ');
         Serial.print(temp);
-          count++;
+        count++;
       if (count >15) 
         {
           
@@ -298,11 +303,10 @@ void loop() { // loop forever
            lcd.setCursor(count, 1);
            lcd.print(currentInputSignalToLetter());
            temp=(currentInputSignalToLetter());
-           Serial.print(temp);
            count++;
           if (count >15) 
           {
-          
+          delay(500);
           lcd.clear();
           lcd.setCursor(count, 0);
           count =0;
@@ -317,14 +321,19 @@ void loop() { // loop forever
   }
 
   // START TRANS
-/****************** Receiving Role ***************************/  
+/****************** Ping Out Role ***************************/  
 if (role == 1)  {
+    
+    radio.stopListening();                                    // First, stop listening so we can talk.
+    unsigned long time = micros();                             // Take the time, and send it.  This will block until complete
+     if (!radio.write( &time, sizeof(unsigned long) )){
+     }
+        
     radio.startListening();                                    // Now, continue listening
     unsigned long started_waiting_at = micros();               // Set up a timeout period, get the current microseconds
     boolean timeout = false;                                   // Set up a variable to indicate if a response was received or not
-    
     while ( ! radio.available() ){                             // While nothing is received
-      if (micros() - started_waiting_at > 200000 ){            // If waited longer than 200ms, indicate timeout and exit while loop
+      if (micros() - started_waiting_at > 1000 ){            // If waited longer than 200ms, indicate timeout and exit while loop
           timeout = true;
           break;
       }      
@@ -333,54 +342,63 @@ if (role == 1)  {
     if ( timeout ){                                             // Describe the results
         Serial.println(F("Failed, response timed out."));
     }else{
+        unsigned long got_time;                                 // Grab the response, compare, and send to debugging spew
         radio.read( &temp, sizeof(char) );
-        unsigned long time = micros();
-        if (temp!='\0') // if receiving message is not empty
+        unsigned long time = micros(); 
+
+        if (temp!='\0')
         {
-          lcd.setCursor(tcount, 0); // set LCD row 1
-          lcd.print(temp);   // print message temp
-          tcount++;          // count LCD count
-          temp= '\0';        //clear temp
-          if (tcount>15)     // if count > 15 will clear lcd and count 
+          lcd.setCursor(tcount, 0);
+          lcd.print(temp);
+        tcount++;
+          if (tcount>15) 
           {
             tcount=0;
             lcd.clear();
           }
+          temp= '\0';
         }
     }
+
     // Try again 10ms later
     delay(10);
   }
 
-/****************** Sent Role ***************************/
-  if ( role == 0 ) // Role to sent message
+/****************** Pong Back Role ***************************/
+
+  if ( role == 0 )
   {
+    unsigned long got_time;
     if( radio.available()){
       radio.stopListening();      // First, stop listening so we can talk 
-      radio.write( &temp, sizeof(char) );   // Send the message.      
-      temp= '\0'; //clear temp
-     // radio.startListening();       // Now, resume listening so we catch the next packets.     
+      radio.write( &temp, sizeof(char) );       // Send the final one back.      
+       temp= '\0';
+      radio.startListening();     // Now, resume listening so we catch the next packets.     
       lcd.setCursor(count-1, 0);
    }
  }
 
-/****************** Change Roles by switch button ***************************/
+
+
+
+/****************** Change Roles via Serial Commands ***************************/
 
 if (digitalRead(switchBu) == HIGH)
   {
-    delay(250);
-    //Serial.print("Yes");
-    
+    delay(250);   
     if (role==0)
     {
       role=1;
       lcd.clear();
+      count=0;
+      tcount=0;
     }
     else
     {
       role=0;
       lcd.clear();
+      count=0;
+      tcount=0;
     }
-  }
-
+  } 
 } // end of loop
